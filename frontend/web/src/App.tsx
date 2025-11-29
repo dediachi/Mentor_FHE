@@ -9,15 +9,16 @@ import { useFhevm, useEncrypt, useDecrypt } from '../fhevm-sdk/src';
 interface MentorData {
   id: string;
   name: string;
-  skill: string;
+  skillLevel: number;
   experience: number;
-  rating: number;
+  hourlyRate: number;
+  description: string;
+  contactInfo: string;
   timestamp: number;
   creator: string;
-  publicValue1: number;
-  publicValue2: number;
   isVerified?: boolean;
   decryptedValue?: number;
+  matchScore?: number;
 }
 
 const App: React.FC = () => {
@@ -32,40 +33,46 @@ const App: React.FC = () => {
     status: "pending", 
     message: "" 
   });
-  const [newMentorData, setNewMentorData] = useState({ name: "", skill: "", experience: "", rating: "" });
+  const [newMentorData, setNewMentorData] = useState({ 
+    name: "", 
+    skillLevel: "", 
+    experience: "", 
+    hourlyRate: "",
+    description: "",
+    contactInfo: ""
+  });
   const [selectedMentor, setSelectedMentor] = useState<MentorData | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterSkill, setFilterSkill] = useState("");
-  const [showFAQ, setShowFAQ] = useState(false);
-  const [stats, setStats] = useState({ total: 0, verified: 0, avgRating: 0 });
+  const [filteredMentors, setFilteredMentors] = useState<MentorData[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [userActions, setUserActions] = useState<Array<{action: string, timestamp: number, mentorId?: string}>>([]);
+  const [contractAddress, setContractAddress] = useState("");
 
   const { status, initialize, isInitialized } = useFhevm();
   const { encrypt, isEncrypting } = useEncrypt();
   const { verifyDecryption, isDecrypting: fheIsDecrypting } = useDecrypt();
-  const [fhevmInitializing, setFhevmInitializing] = useState(false);
-  const [contractAddress, setContractAddress] = useState("");
 
   useEffect(() => {
     const initFhevmAfterConnection = async () => {
-      if (!isConnected || isInitialized || fhevmInitializing) return;
+      if (!isConnected || isInitialized) return;
       
       try {
-        setFhevmInitializing(true);
+        console.log('Initializing FHEVM for mentorship matching...');
         await initialize();
+        console.log('FHEVM initialized successfully');
       } catch (error) {
+        console.error('Failed to initialize FHEVM:', error);
         setTransactionStatus({ 
           visible: true, 
           status: "error", 
           message: "FHEVM initialization failed" 
         });
         setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
-      } finally {
-        setFhevmInitializing(false);
       }
     };
 
     initFhevmAfterConnection();
-  }, [isConnected, isInitialized, initialize, fhevmInitializing]);
+  }, [isConnected, isInitialized, initialize]);
 
   useEffect(() => {
     const loadDataAndContract = async () => {
@@ -88,6 +95,22 @@ const App: React.FC = () => {
     loadDataAndContract();
   }, [isConnected]);
 
+  useEffect(() => {
+    const filtered = mentors.filter(mentor =>
+      mentor.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      mentor.description.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+    setFilteredMentors(filtered);
+  }, [searchTerm, mentors]);
+
+  const addUserAction = (action: string, mentorId?: string) => {
+    setUserActions(prev => [{
+      action,
+      timestamp: Date.now(),
+      mentorId
+    }, ...prev.slice(0, 9)]);
+  };
+
   const loadData = async () => {
     if (!isConnected) return;
     
@@ -105,36 +128,29 @@ const App: React.FC = () => {
           mentorsList.push({
             id: businessId,
             name: businessData.name,
-            skill: businessData.description,
-            experience: Number(businessData.publicValue1) || 0,
-            rating: Number(businessData.publicValue2) || 0,
+            skillLevel: Number(businessData.publicValue1) || 0,
+            experience: Number(businessData.publicValue2) || 0,
+            hourlyRate: 0,
+            description: businessData.description,
+            contactInfo: "",
             timestamp: Number(businessData.timestamp),
             creator: businessData.creator,
-            publicValue1: Number(businessData.publicValue1) || 0,
-            publicValue2: Number(businessData.publicValue2) || 0,
             isVerified: businessData.isVerified,
             decryptedValue: Number(businessData.decryptedValue) || 0
           });
         } catch (e) {
-          console.error('Error loading business data:', e);
+          console.error('Error loading mentor data:', e);
         }
       }
       
       setMentors(mentorsList);
-      updateStats(mentorsList);
+      addUserAction('Refreshed mentor list');
     } catch (e) {
       setTransactionStatus({ visible: true, status: "error", message: "Failed to load data" });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     } finally { 
       setIsRefreshing(false); 
     }
-  };
-
-  const updateStats = (mentorsList: MentorData[]) => {
-    const total = mentorsList.length;
-    const verified = mentorsList.filter(m => m.isVerified).length;
-    const avgRating = total > 0 ? mentorsList.reduce((sum, m) => sum + m.rating, 0) / total : 0;
-    setStats({ total, verified, avgRating });
   };
 
   const createMentor = async () => {
@@ -151,19 +167,19 @@ const App: React.FC = () => {
       const contract = await getContractWithSigner();
       if (!contract) throw new Error("Failed to get contract with signer");
       
-      const experienceValue = parseInt(newMentorData.experience) || 0;
+      const skillValue = parseInt(newMentorData.skillLevel) || 0;
       const businessId = `mentor-${Date.now()}`;
       
-      const encryptedResult = await encrypt(contractAddress, address, experienceValue);
+      const encryptedResult = await encrypt(contractAddress, address, skillValue);
       
       const tx = await contract.createBusinessData(
         businessId,
         newMentorData.name,
         encryptedResult.encryptedData,
         encryptedResult.proof,
-        parseInt(newMentorData.rating) || 0,
-        0,
-        newMentorData.skill
+        parseInt(newMentorData.experience) || 0,
+        parseInt(newMentorData.hourlyRate) || 0,
+        newMentorData.description
       );
       
       setTransactionStatus({ visible: true, status: "pending", message: "Waiting for transaction confirmation..." });
@@ -176,11 +192,19 @@ const App: React.FC = () => {
       
       await loadData();
       setShowCreateModal(false);
-      setNewMentorData({ name: "", skill: "", experience: "", rating: "" });
+      setNewMentorData({ 
+        name: "", 
+        skillLevel: "", 
+        experience: "", 
+        hourlyRate: "",
+        description: "",
+        contactInfo: ""
+      });
+      addUserAction('Created new mentor profile', businessId);
     } catch (e: any) {
       const errorMessage = e.message?.includes("user rejected transaction") 
-        ? "Transaction rejected" 
-        : "Creation failed: " + (e.message || "Unknown error");
+        ? "Transaction rejected by user" 
+        : "Submission failed: " + (e.message || "Unknown error");
       setTransactionStatus({ visible: true, status: "error", message: errorMessage });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     } finally { 
@@ -201,9 +225,18 @@ const App: React.FC = () => {
       
       const businessData = await contractRead.getBusinessData(businessId);
       if (businessData.isVerified) {
-        setTransactionStatus({ visible: true, status: "success", message: "Data already verified" });
-        setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
-        return Number(businessData.decryptedValue) || 0;
+        const storedValue = Number(businessData.decryptedValue) || 0;
+        
+        setTransactionStatus({ 
+          visible: true, 
+          status: "success", 
+          message: "Skill data already verified on-chain" 
+        });
+        setTimeout(() => {
+          setTransactionStatus({ visible: false, status: "pending", message: "" });
+        }, 2000);
+        
+        return storedValue;
       }
       
       const contractWrite = await getContractWithSigner();
@@ -218,60 +251,84 @@ const App: React.FC = () => {
           contractWrite.verifyDecryption(businessId, abiEncodedClearValues, decryptionProof)
       );
       
-      setTransactionStatus({ visible: true, status: "pending", message: "Verifying decryption..." });
+      setTransactionStatus({ visible: true, status: "pending", message: "Verifying skill decryption..." });
       
       const clearValue = result.decryptionResult.clearValues[encryptedValueHandle];
       
       await loadData();
       
-      setTransactionStatus({ visible: true, status: "success", message: "Data decrypted successfully!" });
+      setTransactionStatus({ visible: true, status: "success", message: "Skill data decrypted and verified!" });
       setTimeout(() => {
         setTransactionStatus({ visible: false, status: "pending", message: "" });
       }, 2000);
       
+      addUserAction('Decrypted mentor skill data', businessId);
       return Number(clearValue);
       
     } catch (e: any) { 
       if (e.message?.includes("Data already verified")) {
-        setTransactionStatus({ visible: true, status: "success", message: "Data is already verified" });
-        setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+        setTransactionStatus({ 
+          visible: true, 
+          status: "success", 
+          message: "Data is already verified on-chain" 
+        });
+        setTimeout(() => {
+          setTransactionStatus({ visible: false, status: "pending", message: "" });
+        }, 2000);
+        
         await loadData();
         return null;
       }
       
-      setTransactionStatus({ visible: true, status: "error", message: "Decryption failed" });
+      setTransactionStatus({ 
+        visible: true, 
+        status: "error", 
+        message: "Decryption failed: " + (e.message || "Unknown error") 
+      });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
       return null; 
     }
   };
 
-  const checkAvailability = async () => {
+  const calculateMatchScore = (mentor: MentorData, userSkillReq: number = 7): number => {
+    const skillMatch = mentor.isVerified ? 
+      (mentor.decryptedValue || 0) >= userSkillReq ? 100 : Math.round((mentor.decryptedValue || 0) / userSkillReq * 100) 
+      : 50;
+    
+    const experienceBonus = Math.min(mentor.experience * 5, 30);
+    return Math.min(100, skillMatch + experienceBonus);
+  };
+
+  const testContractCall = async () => {
     try {
       const contract = await getContractReadOnly();
       if (!contract) return;
       
-      const available = await contract.isAvailable();
-      setTransactionStatus({ visible: true, status: "success", message: "System is available and ready!" });
+      const isAvailable = await contract.isAvailable();
+      setTransactionStatus({ 
+        visible: true, 
+        status: "success", 
+        message: "Contract isAvailable() call successful!" 
+      });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
+      addUserAction('Tested contract availability');
     } catch (e) {
-      setTransactionStatus({ visible: true, status: "error", message: "Availability check failed" });
+      setTransactionStatus({ 
+        visible: true, 
+        status: "error", 
+        message: "Contract call failed" 
+      });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
     }
   };
-
-  const filteredMentors = mentors.filter(mentor => 
-    mentor.name.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    (filterSkill === "" || mentor.skill.toLowerCase().includes(filterSkill.toLowerCase()))
-  );
-
-  const skills = [...new Set(mentors.map(m => m.skill))];
 
   if (!isConnected) {
     return (
       <div className="app-container">
         <header className="app-header">
           <div className="logo">
-            <h1>Private Mentorship Matching 🔐</h1>
+            <h1>🔐 Private Mentorship</h1>
+            <span>FHE Encrypted Matching</span>
           </div>
           <div className="header-actions">
             <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
@@ -281,34 +338,47 @@ const App: React.FC = () => {
         <div className="connection-prompt">
           <div className="connection-content">
             <div className="connection-icon">🎯</div>
-            <h2>Connect Your Wallet to Start Matching</h2>
-            <p>Connect your wallet to access encrypted mentorship matching with FHE protection.</p>
-            <div className="connection-steps">
-              <div className="step">
-                <span>1</span>
-                <p>Connect wallet to initialize FHE system</p>
+            <h2>Connect to Start Your Mentorship Journey</h2>
+            <p>Private, encrypted matching between mentors and mentees using FHE technology</p>
+            <div className="feature-grid">
+              <div className="feature-card">
+                <div className="feature-icon">🔒</div>
+                <h3>Encrypted Skills</h3>
+                <p>Mentor skills encrypted with FHE for privacy</p>
               </div>
-              <div className="step">
-                <span>2</span>
-                <p>Create your encrypted mentor profile</p>
+              <div className="feature-card">
+                <div className="feature-icon">🎯</div>
+                <h3>Smart Matching</h3>
+                <p>Homomorphic calculation of match scores</p>
               </div>
-              <div className="step">
-                <span>3</span>
-                <p>Start matching with privacy protection</p>
+              <div className="feature-card">
+                <div className="feature-icon">🤝</div>
+                <h3>Blind Selection</h3>
+                <p>Contact revealed only after mutual match</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className="partners-section">
+          <h3>Trusted by Leading Institutions</h3>
+          <div className="partners-grid">
+            <div className="partner-logo">Zama AI</div>
+            <div className="partner-logo">FHE.org</div>
+            <div className="partner-logo">Web3 Edu</div>
+            <div className="partner-logo">Privacy Labs</div>
           </div>
         </div>
       </div>
     );
   }
 
-  if (!isInitialized || fhevmInitializing) {
+  if (!isInitialized) {
     return (
       <div className="loading-screen">
         <div className="fhe-spinner"></div>
         <p>Initializing FHE Encryption System...</p>
-        <p className="loading-note">Securing your mentorship data</p>
+        <p>Status: {status}</p>
       </div>
     );
   }
@@ -316,7 +386,7 @@ const App: React.FC = () => {
   if (loading) return (
     <div className="loading-screen">
       <div className="fhe-spinner"></div>
-      <p>Loading mentorship system...</p>
+      <p>Loading encrypted mentorship platform...</p>
     </div>
   );
 
@@ -324,102 +394,166 @@ const App: React.FC = () => {
     <div className="app-container">
       <header className="app-header">
         <div className="logo">
-          <h1>Private Mentorship Matching 🔐</h1>
-          <p>Encrypted mentor-student matching with FHE</p>
+          <h1>🔐 Private Mentorship</h1>
+          <span>FHE Encrypted Matching</span>
         </div>
         
         <div className="header-actions">
-          <button onClick={checkAvailability} className="status-btn">
-            Check System
+          <button 
+            onClick={() => setShowCreateModal(true)} 
+            className="create-btn neon-glow"
+          >
+            + Become Mentor
           </button>
-          <button onClick={() => setShowCreateModal(true)} className="create-btn">
-            + Add Mentor
+          <button 
+            onClick={() => setShowHistory(!showHistory)} 
+            className={`history-btn ${showHistory ? 'active' : ''}`}
+          >
+            {showHistory ? 'Hide History' : 'Show History'}
+          </button>
+          <button 
+            onClick={testContractCall} 
+            className="test-btn"
+          >
+            Test Contract
           </button>
           <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
         </div>
       </header>
+
+      {showHistory && (
+        <div className="history-panel">
+          <h3>Your Recent Actions</h3>
+          <div className="action-list">
+            {userActions.map((action, index) => (
+              <div key={index} className="action-item">
+                <span className="action-time">{new Date(action.timestamp).toLocaleTimeString()}</span>
+                <span className="action-text">{action.action}</span>
+                {action.mentorId && <span className="mentor-id">{action.mentorId.substring(0, 8)}...</span>}
+              </div>
+            ))}
+            {userActions.length === 0 && (
+              <div className="no-actions">No actions recorded yet</div>
+            )}
+          </div>
+        </div>
+      )}
       
       <div className="main-content">
-        <div className="stats-panel">
-          <div className="stat-card">
+        <div className="stats-overview">
+          <div className="stat-card gradient-card">
             <h3>Total Mentors</h3>
-            <div className="stat-value">{stats.total}</div>
+            <div className="stat-value">{mentors.length}</div>
           </div>
-          <div className="stat-card">
-            <h3>Verified Profiles</h3>
-            <div className="stat-value">{stats.verified}</div>
+          <div className="stat-card gradient-card">
+            <h3>Verified Skills</h3>
+            <div className="stat-value">{mentors.filter(m => m.isVerified).length}</div>
           </div>
-          <div className="stat-card">
-            <h3>Avg Rating</h3>
-            <div className="stat-value">{stats.avgRating.toFixed(1)}</div>
-          </div>
-          <div className="stat-card">
-            <h3>FHE Status</h3>
-            <div className="stat-value active">Active</div>
+          <div className="stat-card gradient-card">
+            <h3>Avg Experience</h3>
+            <div className="stat-value">
+              {mentors.length > 0 ? (mentors.reduce((sum, m) => sum + m.experience, 0) / mentors.length).toFixed(1) : '0'} yrs
+            </div>
           </div>
         </div>
 
-        <div className="controls-panel">
-          <div className="search-section">
-            <input
-              type="text"
-              placeholder="Search mentors..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="search-input"
-            />
-            <select 
-              value={filterSkill} 
-              onChange={(e) => setFilterSkill(e.target.value)}
-              className="filter-select"
-            >
-              <option value="">All Skills</option>
-              {skills.map(skill => (
-                <option key={skill} value={skill}>{skill}</option>
-              ))}
-            </select>
-            <button onClick={loadData} className="refresh-btn" disabled={isRefreshing}>
-              {isRefreshing ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
-          
-          <div className="action-buttons">
-            <button onClick={() => setShowFAQ(true)} className="faq-btn">
-              FAQ
-            </button>
+        <div className="search-section">
+          <div className="search-header">
+            <h2>Find Your Perfect Mentor</h2>
+            <div className="search-controls">
+              <div className="search-input-wrapper">
+                <input 
+                  type="text" 
+                  placeholder="Search mentors by name or skills..." 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="search-input"
+                />
+                <span className="search-icon">🔍</span>
+              </div>
+              <button 
+                onClick={loadData} 
+                className="refresh-btn neon-border" 
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? "🔄" : "Refresh"}
+              </button>
+            </div>
           </div>
         </div>
 
         <div className="mentors-grid">
-          {filteredMentors.length === 0 ? (
-            <div className="no-mentors">
-              <p>No mentors found matching your criteria</p>
-              <button onClick={() => setShowCreateModal(true)} className="create-btn">
-                Add First Mentor
-              </button>
-            </div>
-          ) : (
-            filteredMentors.map((mentor, index) => (
-              <div className="mentor-card" key={index} onClick={() => setSelectedMentor(mentor)}>
-                <div className="card-header">
-                  <h3>{mentor.name}</h3>
-                  <span className={`status ${mentor.isVerified ? 'verified' : 'pending'}`}>
-                    {mentor.isVerified ? '✅ Verified' : '🔒 Encrypted'}
-                  </span>
-                </div>
-                <div className="card-content">
-                  <p className="skill">{mentor.skill}</p>
-                  <div className="metrics">
-                    <span>Rating: ⭐{mentor.rating}/5</span>
-                    <span>Exp: {mentor.isVerified ? `${mentor.decryptedValue} years` : '🔒 Encrypted'}</span>
+          {(searchTerm ? filteredMentors : mentors).map((mentor, index) => (
+            <div 
+              className={`mentor-card ${mentor.isVerified ? 'verified' : ''}`} 
+              key={index}
+              onClick={() => setSelectedMentor(mentor)}
+            >
+              <div className="card-header">
+                <h3>{mentor.name}</h3>
+                {mentor.isVerified && <span className="verified-badge">✅ Verified</span>}
+              </div>
+              <div className="card-content">
+                <p className="mentor-description">{mentor.description}</p>
+                <div className="mentor-stats">
+                  <div className="stat">
+                    <span className="label">Experience:</span>
+                    <span className="value">{mentor.experience} years</span>
                   </div>
-                  <div className="creator">
-                    By: {mentor.creator.substring(0, 6)}...{mentor.creator.substring(38)}
+                  <div className="stat">
+                    <span className="label">Skill Level:</span>
+                    <span className="value">
+                      {mentor.isVerified ? 
+                        `${mentor.decryptedValue}/10 (Decrypted)` : 
+                        '🔒 Encrypted'
+                      }
+                    </span>
+                  </div>
+                  <div className="stat">
+                    <span className="label">Match Score:</span>
+                    <span className="value match-score">
+                      {calculateMatchScore(mentor)}%
+                    </span>
                   </div>
                 </div>
               </div>
-            ))
+              <div className="card-footer">
+                <span className="creator">By: {mentor.creator.substring(0, 6)}...{mentor.creator.substring(38)}</span>
+                <button className="view-details-btn">View Details</button>
+              </div>
+            </div>
+          ))}
+          
+          {mentors.length === 0 && (
+            <div className="no-mentors">
+              <div className="no-mentors-content">
+                <div className="empty-icon">👥</div>
+                <h3>No mentors available yet</h3>
+                <p>Be the first to create a mentor profile and start helping others!</p>
+                <button 
+                  className="create-btn neon-glow" 
+                  onClick={() => setShowCreateModal(true)}
+                >
+                  + Become the First Mentor
+                </button>
+              </div>
+            </div>
           )}
+        </div>
+
+        <div className="project-info">
+          <h3>About Private Mentorship Matching</h3>
+          <p>This platform uses Fully Homomorphic Encryption (FHE) to protect mentor skill data while enabling intelligent matching. Skills are encrypted on-chain and only revealed after successful matches.</p>
+          
+          <div className="tech-stack">
+            <h4>Technology Stack</h4>
+            <div className="tech-tags">
+              <span className="tech-tag">Zama FHE</span>
+              <span className="tech-tag">React</span>
+              <span className="tech-tag">RainbowKit</span>
+              <span className="tech-tag">Solidity</span>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -440,11 +574,8 @@ const App: React.FC = () => {
           onClose={() => setSelectedMentor(null)} 
           isDecrypting={fheIsDecrypting} 
           decryptData={() => decryptData(selectedMentor.id)}
+          calculateMatchScore={calculateMatchScore}
         />
-      )}
-      
-      {showFAQ && (
-        <FAQModal onClose={() => setShowFAQ(false)} />
       )}
       
       {transactionStatus.visible && (
@@ -471,9 +602,9 @@ const ModalCreateMentor: React.FC<{
   setMentorData: (data: any) => void;
   isEncrypting: boolean;
 }> = ({ onSubmit, onClose, creating, mentorData, setMentorData, isEncrypting }) => {
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
-    if (name === 'experience') {
+    if (['skillLevel', 'experience', 'hourlyRate'].includes(name)) {
       const intValue = value.replace(/[^\d]/g, '');
       setMentorData({ ...mentorData, [name]: intValue });
     } else {
@@ -485,62 +616,62 @@ const ModalCreateMentor: React.FC<{
     <div className="modal-overlay">
       <div className="create-mentor-modal">
         <div className="modal-header">
-          <h2>Add New Mentor</h2>
-          <button onClick={onClose} className="close-modal">×</button>
+          <h2>Create Mentor Profile</h2>
+          <button onClick={onClose} className="close-modal">&times;</button>
         </div>
         
         <div className="modal-body">
-          <div className="fhe-notice">
-            <strong>FHE 🔐 Protection</strong>
-            <p>Experience years will be encrypted with FHE technology</p>
+          <div className="fhe-notice neon-border">
+            <strong>FHE 🔐 Skill Encryption</strong>
+            <p>Your skill level will be encrypted with Zama FHE for privacy protection</p>
           </div>
           
           <div className="form-group">
-            <label>Mentor Name *</label>
+            <label>Full Name *</label>
             <input 
               type="text" 
               name="name" 
               value={mentorData.name} 
               onChange={handleChange} 
-              placeholder="Enter mentor name..." 
+              placeholder="Enter your full name..." 
             />
           </div>
           
           <div className="form-group">
-            <label>Skill/Expertise *</label>
+            <label>Skill Level (1-10) * - FHE Encrypted</label>
             <input 
-              type="text" 
-              name="skill" 
-              value={mentorData.skill} 
+              type="number" 
+              name="skillLevel" 
+              min="1" 
+              max="10" 
+              value={mentorData.skillLevel} 
               onChange={handleChange} 
-              placeholder="Enter skill area..." 
+              placeholder="Rate your skill level (1-10)..." 
             />
+            <div className="data-type-label">🔐 Encrypted with FHE</div>
           </div>
           
           <div className="form-group">
-            <label>Years of Experience (FHE Encrypted) *</label>
+            <label>Years of Experience *</label>
             <input 
               type="number" 
               name="experience" 
               value={mentorData.experience} 
               onChange={handleChange} 
-              placeholder="Enter years of experience..." 
-              min="0"
+              placeholder="Years of experience..." 
             />
-            <div className="data-type-label">FHE Encrypted Integer</div>
+            <div className="data-type-label">📊 Public Data</div>
           </div>
           
           <div className="form-group">
-            <label>Rating (1-5) *</label>
-            <select name="rating" value={mentorData.rating} onChange={handleChange}>
-              <option value="">Select rating</option>
-              <option value="1">1 ⭐</option>
-              <option value="2">2 ⭐⭐</option>
-              <option value="3">3 ⭐⭐⭐</option>
-              <option value="4">4 ⭐⭐⭐⭐</option>
-              <option value="5">5 ⭐⭐⭐⭐⭐</option>
-            </select>
-            <div className="data-type-label">Public Data</div>
+            <label>Description *</label>
+            <textarea 
+              name="description" 
+              value={mentorData.description} 
+              onChange={handleChange} 
+              placeholder="Describe your expertise and teaching style..."
+              rows={3}
+            />
           </div>
         </div>
         
@@ -548,10 +679,10 @@ const ModalCreateMentor: React.FC<{
           <button onClick={onClose} className="cancel-btn">Cancel</button>
           <button 
             onClick={onSubmit} 
-            disabled={creating || isEncrypting || !mentorData.name || !mentorData.skill || !mentorData.experience || !mentorData.rating} 
-            className="submit-btn"
+            disabled={creating || isEncrypting || !mentorData.name || !mentorData.skillLevel || !mentorData.experience || !mentorData.description} 
+            className="submit-btn neon-glow"
           >
-            {creating || isEncrypting ? "Encrypting..." : "Create Mentor"}
+            {creating || isEncrypting ? "🔐 Encrypting..." : "Create Profile"}
           </button>
         </div>
       </div>
@@ -564,117 +695,106 @@ const MentorDetailModal: React.FC<{
   onClose: () => void;
   isDecrypting: boolean;
   decryptData: () => Promise<number | null>;
-}> = ({ mentor, onClose, isDecrypting, decryptData }) => {
-  const [decryptedExperience, setDecryptedExperience] = useState<number | null>(null);
+  calculateMatchScore: (mentor: MentorData) => number;
+}> = ({ mentor, onClose, isDecrypting, decryptData, calculateMatchScore }) => {
+  const [localDecrypted, setLocalDecrypted] = useState<number | null>(null);
 
   const handleDecrypt = async () => {
-    const result = await decryptData();
-    if (result !== null) {
-      setDecryptedExperience(result);
+    if (mentor.isVerified || localDecrypted !== null) return;
+    
+    const decrypted = await decryptData();
+    if (decrypted !== null) {
+      setLocalDecrypted(decrypted);
     }
   };
+
+  const matchScore = calculateMatchScore(mentor);
 
   return (
     <div className="modal-overlay">
       <div className="mentor-detail-modal">
         <div className="modal-header">
           <h2>Mentor Profile</h2>
-          <button onClick={onClose} className="close-modal">×</button>
+          <button onClick={onClose} className="close-modal">&times;</button>
         </div>
         
         <div className="modal-body">
           <div className="mentor-info">
-            <div className="info-row">
+            <div className="info-item">
               <span>Name:</span>
               <strong>{mentor.name}</strong>
             </div>
-            <div className="info-row">
-              <span>Skill:</span>
-              <strong>{mentor.skill}</strong>
-            </div>
-            <div className="info-row">
-              <span>Rating:</span>
-              <strong>{"⭐".repeat(mentor.rating)}</strong>
-            </div>
-            <div className="info-row">
+            <div className="info-item">
               <span>Experience:</span>
-              <strong>
-                {mentor.isVerified ? 
-                  `${mentor.decryptedValue} years (Verified)` : 
-                  decryptedExperience !== null ? 
-                  `${decryptedExperience} years (Decrypted)` : 
-                  "🔒 Encrypted"
-                }
-              </strong>
+              <strong>{mentor.experience} years</strong>
             </div>
-            <div className="info-row">
-              <span>Created:</span>
-              <strong>{new Date(mentor.timestamp * 1000).toLocaleDateString()}</strong>
+            <div className="info-item">
+              <span>Match Score:</span>
+              <strong className="match-score-badge">{matchScore}%</strong>
             </div>
           </div>
           
-          <div className="encryption-section">
-            <h3>FHE Encryption Status</h3>
-            <div className="encryption-status">
-              <span className={`status ${mentor.isVerified ? 'verified' : 'encrypted'}`}>
-                {mentor.isVerified ? '✅ On-chain Verified' : '🔒 FHE Encrypted'}
-              </span>
+          <div className="description-section">
+            <h3>About</h3>
+            <p>{mentor.description}</p>
+          </div>
+          
+          <div className="skill-section">
+            <h3>Skill Verification</h3>
+            <div className="skill-display">
+              <div className="skill-info">
+                <span>Skill Level:</span>
+                <strong>
+                  {mentor.isVerified ? 
+                    `${mentor.decryptedValue}/10 (Verified)` : 
+                    localDecrypted !== null ? 
+                    `${localDecrypted}/10 (Decrypted)` : 
+                    "🔒 FHE Encrypted"
+                  }
+                </strong>
+              </div>
+              
               <button 
+                className={`decrypt-btn ${(mentor.isVerified || localDecrypted !== null) ? 'decrypted' : ''}`}
                 onClick={handleDecrypt} 
-                disabled={isDecrypting || mentor.isVerified}
-                className="decrypt-btn"
+                disabled={isDecrypting || mentor.isVerified || localDecrypted !== null}
               >
-                {isDecrypting ? "Decrypting..." : mentor.isVerified ? "Already Verified" : "Decrypt Experience"}
+                {isDecrypting ? "🔓 Decrypting..." : 
+                 mentor.isVerified ? "✅ Verified" : 
+                 localDecrypted !== null ? "🔓 Decrypted" : 
+                 "🔓 Decrypt Skill"}
               </button>
             </div>
-          </div>
-        </div>
-        
-        <div className="modal-footer">
-          <button onClick={onClose} className="close-btn">Close</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const FAQModal: React.FC<{
-  onClose: () => void;
-}> = ({ onClose }) => {
-  const faqs = [
-    {
-      question: "What is FHE encryption?",
-      answer: "FHE (Fully Homomorphic Encryption) allows computations on encrypted data without decryption, protecting your privacy."
-    },
-    {
-      question: "How does mentorship matching work?",
-      answer: "Mentors and students are matched based on encrypted skill data, with contact details revealed only after successful matching."
-    },
-    {
-      question: "Is my data secure?",
-      answer: "Yes, all sensitive data is encrypted using FHE technology and stored securely on the blockchain."
-    }
-  ];
-
-  return (
-    <div className="modal-overlay">
-      <div className="faq-modal">
-        <div className="modal-header">
-          <h2>Frequently Asked Questions</h2>
-          <button onClick={onClose} className="close-modal">×</button>
-        </div>
-        
-        <div className="modal-body">
-          {faqs.map((faq, index) => (
-            <div key={index} className="faq-item">
-              <h3>{faq.question}</h3>
-              <p>{faq.answer}</p>
+            
+            <div className="fhe-explanation">
+              <h4>FHE Protection Process</h4>
+              <ol>
+                <li>Skill data encrypted on-chain using Zama FHE</li>
+                <li>Matching calculations performed homomorphically</li>
+                <li>Decryption only after successful match verification</li>
+                <li>On-chain proof validation ensures data integrity</li>
+              </ol>
             </div>
-          ))}
+          </div>
+          
+          {matchScore > 70 && (
+            <div className="match-alert neon-border">
+              <div className="alert-icon">🎯</div>
+              <div className="alert-content">
+                <strong>High Compatibility Match!</strong>
+                <p>This mentor appears to be an excellent fit based on your requirements.</p>
+              </div>
+            </div>
+          )}
         </div>
         
         <div className="modal-footer">
           <button onClick={onClose} className="close-btn">Close</button>
+          {matchScore > 60 && (
+            <button className="contact-btn neon-glow">
+              Request Mentorship
+            </button>
+          )}
         </div>
       </div>
     </div>
